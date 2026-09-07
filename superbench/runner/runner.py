@@ -7,7 +7,6 @@ import os
 import sys
 import json
 import random
-import shlex
 import signal
 from pathlib import Path
 from pprint import pformat
@@ -27,14 +26,16 @@ AnsibleClient = LazyImport('superbench.runner.ansible', 'AnsibleClient')
 
 
 def _quote_for_bash_lc(value):
-    r"""Quote a value so it is safe both for the shell and for embedding inside an outer bash -lc '...' string.
+    r"""Quote a value for safe embedding inside an outer bash -lc '...' (or bash -c '...') command string.
 
-    ``shlex.quote`` wraps values containing whitespace or shell metacharacters in single quotes. When the
-    resulting command is later interpolated into ``bash -lc '{command}'``, those single quotes would
-    terminate the outer single-quoted context. Escape any single quotes as ``'\''`` so the value survives
-    both quoting layers.
+    Produce a double-quoted token that contains no single quotes at all, escaping ``\``, ``"``, ``$``, and
+    backtick so no shell expansion occurs. A literal ``'`` cannot be represented in shell without using a
+    ``'`` character, so a value containing one would break the outer single-quoted wrapper; reject it early.
     """
-    return shlex.quote(value).replace("'", "'\\''")
+    if "'" in value:
+        raise ValueError('cannot safely quote value containing a single quote: {!r}'.format(value))
+    escaped = value.replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$').replace('`', '\\`')
+    return '"' + escaped + '"'
 
 
 class SuperBenchRunner():

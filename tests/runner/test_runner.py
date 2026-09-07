@@ -275,26 +275,27 @@ class RunnerTestCase(unittest.TestCase):
     def test_quote_for_bash_lc_survives_bash_lc_wrapper(self):
         """Test _quote_for_bash_lc survives the outer bash -lc / bash -c single-quoted wrapper.
 
-        The helper must produce a token that (a) round-trips through the shell literally and (b) does
-        not prematurely close the outer single-quoted command string used by the Docker (``bash -lc``)
-        and skip-Docker (``bash -c``) dispatch paths.
+        The helper must produce a token that (a) round-trips through the shell literally as a *single*
+        argument (no word-splitting) and (b) does not prematurely close the outer single-quoted command
+        string used by the Docker (``bash -lc``) and skip-Docker (``bash -c``) dispatch paths.
         """
         cases = [
             '/tmp/traces',
             '/tmp/my traces/foo_traces',
-            "/tmp/mia's dir/foo_traces",
-            '/tmp/$(id)/foo_traces',
-            '/tmp/`whoami`/foo_traces',
-            '/tmp/foo;rm -rf x/foo_traces',
+            '/tmp/$(echo INJECTED)/foo_traces',
+            '/tmp/`echo INJECTED`/foo_traces',
+            '/tmp/foo;echo INJECTED/foo_traces',
             '/tmp/foo|bar/foo_traces',
+            '/tmp/back\\slash/foo_traces',
+            '/tmp/dq"quote/foo_traces',
         ]
-        # The two wrapper shapes actually used by run_sys_info / _run_proc.
         wrapper_shapes = [
-            "bash -lc 'echo {token}'",
-            "bash -c 'echo {token}'",
+            "bash -lc 'set -- {token}; [ \"$#\" -eq 1 ] && printf %s \"$1\"'",
+            "bash -c 'set -- {token}; [ \"$#\" -eq 1 ] && printf %s \"$1\"'",
         ]
         for value in cases:
             quoted = _quote_for_bash_lc(value)
+            self.assertNotIn("'", quoted, msg='token must contain no single quotes to be embedding-safe')
             for wrapper in wrapper_shapes:
                 cmd = wrapper.format(token=quoted)
                 with self.subTest(value=value, wrapper=wrapper):
@@ -305,7 +306,12 @@ class RunnerTestCase(unittest.TestCase):
                         check=False,
                     )
                     self.assertEqual(result.returncode, 0, msg=result.stderr)
-                    self.assertEqual(result.stdout.rstrip('\n'), value)
+                    self.assertEqual(result.stdout, value)
+
+    def test_quote_for_bash_lc_rejects_single_quote(self):
+        """Test _quote_for_bash_lc rejects values containing a literal single quote."""
+        with self.assertRaises(ValueError):
+            _quote_for_bash_lc("/tmp/mia's dir/foo_traces")
 
     def test_get_mode_command_rocprof_local(self):
         """Test __get_mode_command with SB_ENABLE_ROCPROF for local mode, including a trace dir with whitespace."""
